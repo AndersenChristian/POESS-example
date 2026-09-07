@@ -1,0 +1,26 @@
+services:
+  microservice:
+    build: ./microservice
+    container_name: microservice
+    ports:
+      - "5001:5001"
+    env_file:
+      - ./microservice/.env
+    depends_on:
+      - siddhi
+
+  siddhi:
+    build: ./siddhi
+    container_name: siddhi-runtime
+    ports:
+      - "7071:7071"
+      - "7072:7072"
+      - "9390:9390"   # optional dashboard
+
+  logging-service:
+    build: ./logging_service
+    container_name: logging-service
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./logging_service/logs:/logs

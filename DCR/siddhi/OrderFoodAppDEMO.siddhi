@@ -1,0 +1,182 @@
+@App:name("OrderFoodAppDEMO")
+
+/* -----------------------------
+   INPUT STREAMS
+   ----------------------------- */
+
+@source(
+    type='http',
+    receiver.url="http://0.0.0.0:7071/customer",
+    @map(type='json')
+)
+define stream CustomerStream(order_id string, action string);
+
+/* Middleman callback */
+@source(
+    type='http',
+    receiver.url="http://0.0.0.0:7072/middleman",
+    @map(type='json')
+)
+define stream MiddlemanStream(
+    order_id string,
+    case_id string,
+    event string,
+    error string
+);
+
+
+/* -----------------------------
+   TABLES
+   ----------------------------- */
+
+define table OrderCases(
+    order_id string,
+    case_id string
+);
+
+
+/* -----------------------------
+   OUTPUT STREAMS (to microservice)
+   ----------------------------- */
+
+@sink(type='http',
+      publisher.url='http://microservice:5001/place_order',
+      method='POST',
+      @map(type='json'))
+define stream PlaceOrderOut(order_id string);
+define stream PlaceOrderOutAttempt(order_id string, case_id string);
+
+@sink(type='http',
+      publisher.url='http://microservice:5001/receive_order',
+      method='POST',
+      @map(type='json'))
+define stream ReceiveOrderOut(order_id string, case_id string);
+define stream ReceiveOrderOutAttempt(order_id string, case_id string);
+
+@sink(type='http',
+      publisher.url='http://microservice:5001/cancel_order',
+      method='POST',
+      @map(type='json'))
+define stream CancelOrderOut(order_id string, case_id string);
+define stream CancelOrderOutAttempt(order_id string, case_id string);
+
+@sink(type='http',
+      publisher.url='http://microservice:5001/pay_order',
+      method='POST',
+      @map(type='json'))
+define stream PayOrderOut(order_id string, case_id string);
+define stream PayOrderOutAttempt(order_id string, case_id string);
+
+define stream ErrorStream(order_id string, error string);
+
+/* -----------------------------
+   OUTPUT STREAMS (to logging)
+   ----------------------------- */
+
+@sink(type='http',
+      publisher.url='http://logging-service:5002/log',
+      method='POST',
+      @map(type='json'))
+define stream Logging(order_id string, error string);
+
+
+/* -----------------------------
+   ROUTING LOGIC
+   ----------------------------- */
+
+/* Customer places order */
+from CustomerStream[action == "PlaceOrder"] as C
+left outer join OrderCases as O
+    on C.order_id == O.order_id
+select C.order_id, O.case_id
+insert into PlaceOrderOutAttempt;
+
+from PlaceOrderOutAttempt[case_id is null]
+select order_id
+insert into PlaceOrderOut;
+
+from PlaceOrderOutAttempt[not(case_id is null)]
+select order_id, "Can't place an order that already exists" as error
+insert into ErrorStream;
+
+
+/* Customer cancels order */
+from CustomerStream[action == "CancelOrder"] as C
+left outer join OrderCases as O
+    on C.order_id == O.order_id
+select C.order_id, O.case_id
+insert into CancelOrderOutAttempt;
+
+from CancelOrderOutAttempt[not(case_id is null)]
+select order_id, case_id
+insert into CancelOrderOut;
+
+from CancelOrderOutAttempt[case_id is null]
+select order_id, "Can't cancel an order that doesn't exist" as error
+insert into ErrorStream;
+
+
+/* Customer receives order */
+from CustomerStream[action == "ReceiveOrder"] as C
+left outer join OrderCases as O
+    on C.order_id == O.order_id
+select C.order_id, O.case_id
+insert into ReceiveOrderOutAttempt;
+
+from ReceiveOrderOutAttempt[not(case_id is null)]
+select order_id, case_id
+insert into ReceiveOrderOut;
+
+from ReceiveOrderOutAttempt[case_id is null]
+select order_id, "Can't receive an order that doesn't exist" as error
+insert into ErrorStream;
+
+
+/* Customer pays */
+from CustomerStream[action == "PayOrder"] as C
+left outer join OrderCases as O
+    on C.order_id == O.order_id
+select C.order_id, O.case_id
+insert into PayOrderOutAttempt;
+
+from PayOrderOutAttempt[not(case_id is null)]
+select order_id, case_id
+insert into PayOrderOut;
+
+from PayOrderOutAttempt[case_id is null]
+select order_id, "Can't pay an order that doesn't exist" as error
+insert into ErrorStream;
+
+
+/* -----------------------------
+   MIDDLEMAN CALLBACKS
+   ----------------------------- */
+
+/* Middleman tells Siddhi the order is created */
+from MiddlemanStream[event == "PlaceOrder"]
+select order_id, case_id
+insert into OrderCases;
+
+/* Middleman tells Siddhi order was received */
+from MiddlemanStream[event == "ReceiveOrder"]
+select order_id, case_id
+insert into Nothing; /* No action needed, just for logging */
+
+/* Middleman tells Siddhi order was cancelled */
+from MiddlemanStream[event == "CancelOrder"]
+select order_id, case_id
+insert into Nothing; /* No action needed, just for logging */
+
+/* Middleman tells Siddhi order was paid */
+from MiddlemanStream[event == "PayOrder"]
+delete OrderCases
+    on OrderCases.order_id == order_id;
+
+
+/* -----------------------------
+   ERROR HANDLING
+   ----------------------------- */
+
+from ErrorStream
+select order_id, error
+insert into Logging; /* TODO: ACTUALLY LOG THIS! */
