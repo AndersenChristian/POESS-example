@@ -15,12 +15,14 @@ services:
     ports:
       - "7071:7071"
       - "7072:7072"
+      - "7073:7073"
       - "9390:9390"   # optional dashboard
 
   logging-service:
     build: ./logging_service
     container_name: logging-service
     ports:
-      - "5002:5002"
+      - "5010:5010"
     volumes:
       - ./logging_service/logs:/logs
+      - ./logging_service/XES:/XES

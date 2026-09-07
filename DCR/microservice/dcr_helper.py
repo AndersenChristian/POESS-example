@@ -46,22 +46,43 @@ def create_case():
     return case_id
 
 
+def get_enabled_events(case_id):
+    """
+    Return the list of enabled event IDs for a given DCR case.
+    """
+    url = f"{DCR_API_BASE}/graphs/{DCR_GRAPH_ID}/sims/{case_id}/events"
+    r = requests.get(url, headers=HEADERS, auth=(USERNAME, PASSWORD))
+
+    if r.status_code not in (200, 201):
+        print(f"[GetEnabledEvents] Error {r.status_code}: {r.text}")
+        return []
+
+    xml = r.text.replace('\\"', '"')
+    pattern = r'<event[^>]*id="([^"]+)"[^>]*enabled="true"[^>]*>'
+    events = re.findall(pattern, xml, flags=re.IGNORECASE)
+
+    print(f"[GetEnabledEvents] case_id={case_id} events={events}")
+    return events
+
+
 def execute_event(case_id, event_id):
-    """
-    Execute an event on an existing DCR case.
-    Returns dict: { "error": bool, "message": str, "enabledEvents": [...] }
-    """
     url = f"{DCR_API_BASE}/graphs/{DCR_GRAPH_ID}/sims/{case_id}/events/{event_id}"
     r = requests.post(url, headers=HEADERS, auth=(USERNAME, PASSWORD), json={})
 
-    if r.status_code not in (200, 201):
+    if r.status_code not in (200, 201, 204):
         return {
             "error": True,
             "message": f"DCR returned {r.status_code}",
             "enabledEvents": []
         }
 
-    # DCR returns XML for sims API, but JSON for new API.
+    if not r.content or not r.text.strip():
+        return {
+            "error": False,
+            "message": "",
+            "enabledEvents": []
+        }
+
     try:
         data = r.json()
         enabled = data.get("enabledEvents", [])
@@ -71,9 +92,18 @@ def execute_event(case_id, event_id):
             "enabledEvents": enabled
         }
     except Exception:
+        text = r.text
+        if "<event" in text:
+            enabled = re.findall(r'<event[^>]*id="([^"]+)"[^>]*enabled="true"', text, flags=re.IGNORECASE)
+            return {
+                "error": False,
+                "message": "",
+                "enabledEvents": enabled
+            }
+
         return {
-            "error": True,
-            "message": "Malformed DCR response",
+            "error": False,
+            "message": "No JSON payload; empty or non-JSON DCR response",
             "enabledEvents": []
         }
 

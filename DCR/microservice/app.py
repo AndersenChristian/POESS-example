@@ -1,7 +1,9 @@
 from flask import Flask, request, jsonify
+import json
 import requests
-from dcr_helper import create_case, execute_event
+from dcr_helper import create_case, execute_event, get_enabled_events
 from enum import Enum
+from datetime import datetime, timezone
 
 class EventID(str, Enum):
     PlaceOrder = "PlaceOrder"
@@ -13,11 +15,23 @@ app = Flask(__name__)
 
 SIDDHI_CALLBACK_URL = "http://siddhi:7072/middleman"
 
+
+def utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
 def send_callback_to_siddhi(order_id, case_id, event_name, dcr_result):
     payload = {
         "order_id": order_id,
         "case_id": case_id,
-        "event": event_name
+        "event": event_name,
+        "timestamp": utc_now_iso(),
+        "role": "microservice",
+        "payload": json.dumps({
+            "enabledEvents": dcr_result.get("enabledEvents", []),
+            "status": "error" if dcr_result.get("error") else "success"
+        }),
+        "error": ""
     }
 
     if dcr_result.get("error"):
@@ -26,7 +40,7 @@ def send_callback_to_siddhi(order_id, case_id, event_name, dcr_result):
     requests.post(SIDDHI_CALLBACK_URL, json=payload)
 
 def process_event(order_id, case_id, event_name):
-    dcr_result = execute_event(case_id, event_name)
+    dcr_result = execute_event(case_id, event_name.value)
     send_callback_to_siddhi(order_id, case_id, event_name.value, dcr_result) #required because siddhi doesn't wait for the response from dcr, so we need to send it manually
     return jsonify({"status": "ok"})
 
@@ -66,6 +80,12 @@ def pay_order():
     order_id = data.get("order_id")
     case_id = data.get("case_id")
     return process_event(order_id, case_id, EventID.PayOrder)
+
+
+@app.route("/enabled_events/<case_id>", methods=["GET"])
+def enabled_events(case_id):
+    events = get_enabled_events(case_id)
+    return jsonify({"case_id": case_id, "enabled_events": events})
 
 
 if __name__ == "__main__":

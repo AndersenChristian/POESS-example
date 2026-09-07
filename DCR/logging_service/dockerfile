@@ -6,9 +6,7 @@ COPY app.py /app/
 
 RUN pip install flask
 
-# Create logs directory
-RUN mkdir /logs
-
-EXPOSE 5002
+# Create log and XES directories
+RUN mkdir -p /logs /XES
 
 CMD ["python", "app.py"]

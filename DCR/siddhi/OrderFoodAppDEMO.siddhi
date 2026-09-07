@@ -21,6 +21,9 @@ define stream MiddlemanStream(
     order_id string,
     case_id string,
     event string,
+    timestamp string,
+    role string,
+    payload string,
     error string
 );
 
@@ -74,10 +77,18 @@ define stream ErrorStream(order_id string, error string);
    ----------------------------- */
 
 @sink(type='http',
-      publisher.url='http://logging-service:5002/log',
+      publisher.url='http://logging-service:5010/log',
       method='POST',
       @map(type='json'))
-define stream Logging(order_id string, error string);
+define stream Logging(
+    event string,
+    case_id string,
+    order_id string,
+    timestamp string,
+    role string,
+    payload string,
+    error string
+);
 
 
 /* -----------------------------
@@ -94,6 +105,10 @@ insert into PlaceOrderOutAttempt;
 from PlaceOrderOutAttempt[case_id is null]
 select order_id
 insert into PlaceOrderOut;
+
+from PlaceOrderOutAttempt[order_id is null]
+select order_id, "Didn't recieve an order ID" as error
+insert into ErrorStream;
 
 from PlaceOrderOutAttempt[not(case_id is null)]
 select order_id, "Can't place an order that already exists" as error
@@ -178,5 +193,9 @@ delete OrderCases
    ----------------------------- */
 
 from ErrorStream
-select order_id, error
-insert into Logging; /* TODO: ACTUALLY LOG THIS! */
+select "Error" as event, "UNKNOWN_CASE" as case_id, order_id, convert(currentTimeMillis(), "string") as timestamp, "system" as role, "" as payload, error
+insert into Logging;
+
+from MiddlemanStream
+select event, case_id, order_id, timestamp, role, payload, ifThenElse(error is null, "", error) as error
+insert into Logging;

@@ -1,2 +1,5 @@
 *.env
+
+# python stuff
 venv/
+__pycache__/
