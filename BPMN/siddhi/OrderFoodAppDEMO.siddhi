@@ -1,0 +1,146 @@
+@App:name("OrderFoodAppDEMO")
+
+/* -----------------------------
+   INPUT STREAMS
+   ----------------------------- */
+
+@source(
+    type='http',
+    receiver.url="http://0.0.0.0:7071/customer",
+    @map(type='json')
+)
+define stream CustomerStream(order_id string, action string);
+
+@source(
+    type='http',
+    receiver.url="http://0.0.0.0:7072/middleman",
+    @map(type='json')
+)
+define stream MiddlemanStream(
+    order_id string,
+    case_id string,
+    event string,
+    timestamp string,
+    role string,
+    payload string,
+    error string
+);
+
+/* -----------------------------
+   CAMUNDA COMMAND OUTPUTS
+   ----------------------------- */
+
+@sink(
+    type='http',
+    publisher.url='http://communication:5001/place_order',
+    method='POST',
+    @map(type='json')
+)
+define stream PlaceOrderOut(order_id string);
+
+@sink(
+    type='http',
+    publisher.url='http://communication:5001/receive_order',
+    method='POST',
+    @map(type='json')
+)
+define stream ReceiveOrderOut(order_id string);
+
+@sink(
+    type='http',
+    publisher.url='http://communication:5001/cancel_order',
+    method='POST',
+    @map(type='json')
+)
+define stream CancelOrderOut(order_id string);
+
+@sink(
+    type='http',
+    publisher.url='http://communication:5001/pay_order',
+    method='POST',
+    @map(type='json')
+)
+define stream PayOrderOut(order_id string);
+
+/* -----------------------------
+   LOGGER OUTPUT
+   ----------------------------- */
+
+@sink(
+    type='http',
+    publisher.url='http://logging-service:5010/log',
+    method='POST',
+    @map(type='json')
+)
+define stream Logging(
+    event string,
+    case_id string,
+    order_id string,
+    timestamp string,
+    role string,
+    payload string,
+    error string
+);
+
+define stream RoutingError(
+    order_id string,
+    error string
+);
+
+/* -----------------------------
+   CUSTOMER EVENT ROUTING
+   ----------------------------- */
+
+from CustomerStream[action == "PlaceOrder" and not(order_id is null)]
+select order_id
+insert into PlaceOrderOut;
+
+from CustomerStream[action == "ReceiveOrder" and not(order_id is null)]
+select order_id
+insert into ReceiveOrderOut;
+
+from CustomerStream[action == "CancelOrder" and not(order_id is null)]
+select order_id
+insert into CancelOrderOut;
+
+from CustomerStream[action == "PayOrder" and not(order_id is null)]
+select order_id
+insert into PayOrderOut;
+
+/* Invalid customer input is logged without calling Camunda. */
+from CustomerStream[order_id is null or action is null]
+select order_id, "order_id and action are required" as error
+insert into RoutingError;
+
+from CustomerStream[
+    action != "PlaceOrder" and
+    action != "ReceiveOrder" and
+    action != "CancelOrder" and
+    action != "PayOrder"
+]
+select order_id, "unsupported action" as error
+insert into RoutingError;
+
+/* -----------------------------
+   CAMUNDA CALLBACKS
+   ----------------------------- */
+
+from MiddlemanStream
+select event,
+       case_id,
+       order_id,
+       timestamp,
+       role,
+       payload,
+       ifThenElse(error is null, "", error) as error
+insert into Logging;
+
+from RoutingError
+select "Error" as event,
+       "UNKNOWN_CASE" as case_id,
+       order_id,
+       convert(currentTimeMillis(), "string") as timestamp,
+       "siddhi" as role,
+       "" as payload,
+       error
+insert into Logging;

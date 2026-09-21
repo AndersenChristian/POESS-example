@@ -1,156 +1,126 @@
 # DCR Order Processing Demo
 
-This project demonstrates an event-driven order-processing workflow built around DCR graphs, Siddhi stream processing, and Python microservices. It is designed to model a simple customer order lifecycle where actions such as place, receive, cancel, and pay are validated by a central event processor and executed through a DCR backend.
+This folder contains the DCR-based implementation of the project. It shows how a process can be modeled with DCR Graph constraints, coordinated through Siddhi, and connected to Python services.
 
-The demo consists of three main runtime components:
-
-- A Python microservice that communicates with the DCR graph API
-- A Siddhi runtime that routes incoming customer actions and handles callbacks
-- A lightweight logging service that records operational errors to a file
-
-Everything is orchestrated with Docker Compose so the full system can run locally in a single setup.
+The goal is to provide a small but functional workflow example for order handling, where events such as placing, receiving, canceling, and paying an order are validated and executed through a process-aware backend.
 
 ---
 
-## Architecture overview
+## Overview
 
-The project follows a message-routing pattern where Siddhi acts as the orchestration layer between the customer-facing event stream and the DCR microservice.
+The DCR example is built from three main runtime components:
+
+- a Python microservice that interacts with the DCR backend
+- a Siddhi runtime that routes incoming events and validates process state
+- a logging service that stores operational errors and warnings
+
+Everything is orchestrated with Docker Compose and can be started locally as a single stack.
+
+---
+
+## Architecture
 
 ```text
-Customer / Client
-      |
-      v
-Siddhi Runtime (port 7071 / 7073)
-  |
-  |-- validates order_id / case_id state
-  |-- routes to microservice endpoints
-  |
-  +--> Microservice (port 5001)
+Customer / Event Source
           |
-          |-- creates DCR cases
-          |-- executes events through DCR API
-          |-- sends callback to Siddhi
+          v
+      Siddhi Runtime
           |
-          +--> DCR Graph API
-
-Siddhi also forwards errors to the Logging Service (port 5002)
-      |
-      v
-Logging Service
-  |
-  +--> writes to /logs/logs.txt
+          +----> Microservice
+          |            |
+          |            v
+          |         DCR Graph API
+          |
+          +----> Logging Service
 ```
+
+Siddhi acts as the central orchestration layer. It receives incoming customer actions, checks whether the order is valid in the current process state, sends the request to the microservice, and records failures to the logging service.
 
 ---
 
 ## Components
 
-### 1. Microservice
-Location: `DCR/microservice`
+### Microservice
+Location: `microservice`
 
-This is the Python Flask application responsible for interacting with the DCR graph service.
+This Flask service is responsible for interacting with the DCR Graph API and executing workflow events.
 
 Responsibilities:
 
-- Create new DCR cases for each placed order
-- Execute DCR events such as `PlaceOrder`, `ReceiveOrder`, `CancelOrder`, and `PayOrder`
-- Forward the outcome back to Siddhi via a callback
-- Expose HTTP endpoints for the Siddhi runtime to call
+- create a new DCR case for an order
+- trigger events such as `PlaceOrder`, `ReceiveOrder`, `CancelOrder`, and `PayOrder`
+- return callback results to Siddhi
+- expose HTTP endpoints for event execution
 
 Key files:
 
-- `app.py` - Flask API endpoints and request routing
-- `dcr_helper.py` - DCR API integration and authentication logic
-- `requirements.txt` - Python dependencies
-- `.env.template` - template for required DCR credentials
+- `app.py` – REST endpoints and request handling
+- `dcr_helper.py` – DCR API integration and credential handling
+- `requirements.txt` – Python dependencies
+- `.env.template` – template for the required environment variables
 
-### 2. Siddhi runtime
-Location: `DCR/siddhi`
+### Siddhi runtime
+Location: `siddhi`
 
-Siddhi handles stream-based validation, order state tracking, and routing logic.
-
-Responsibilities:
-
-- Receive customer actions from an HTTP input stream
-- Check if an order exists in the in-memory `OrderCases` table
-- Route valid actions to the microservice endpoints
-- Receive callback events from the microservice
-- Update the state of active orders
-- Send logging payloads to the logging service for invalid actions or failures
-
-Key file:
-
-- `app.siddhi` - event streams, tables, routing logic, and logging sinks
-
-### 3. Logging service
-Location: `DCR/logging_service`
-
-This is a minimal Flask service that records errors as timestamped log lines.
+Siddhi manages event processing, order validation, routing, and state tracking.
 
 Responsibilities:
 
-- Receive POST requests from Siddhi
-- Write log entries into `/logs/logs.txt`
-- Print the same message to stdout for Docker log visibility
+- receive incoming customer actions
+- validate the order state before forwarding a request
+- call the correct microservice endpoint
+- receive callback responses and update state
+- send failures to the logging service
+
+### Logging service
+Location: `logging_service`
+
+This lightweight service logs operational issues and writes them to a file for later inspection.
 
 ---
 
-## Order lifecycle modeled by the system
+## Example order flow
 
-The demo models a simple order workflow:
+A typical DCR workflow looks like this:
 
-1. Customer requests to place an order
-2. Siddhi checks whether the order already exists
-3. If valid, it calls the microservice `/place_order` endpoint
-4. The microservice creates a new DCR case and executes the `PlaceOrder` event
-5. The result is posted back to Siddhi through the callback endpoint
-6. Siddhi stores the `order_id` and `case_id` mapping in `OrderCases`
-7. Later, the customer may receive, cancel, or pay for the order
-8. At each step, Siddhi verifies the order exists before routing the action
-9. Errors are sent to the logging service for persistence
+1. A customer sends a request to place an order
+2. Siddhi validates that the order is not already active
+3. Siddhi calls the DCR microservice
+4. The microservice creates a DCR case and executes the relevant event
+5. The result is returned to Siddhi through a callback
+6. Later, the same order can be received, canceled, or paid for
+7. Invalid actions are rejected and logged
 
 ---
 
-## Project structure
+## Supported actions
 
-```text
-DCR/
-├── docker-compose.yml
-├── README.md
-├── logging_service/
-│   ├── app.py
-│   ├── Dockerfile
-│   └── logs/
-├── microservice/
-│   ├── .env.template
-│   ├── app.py
-│   ├── dcr_helper.py
-│   ├── dockerfile
-│   ├── requirements.txt
-│   └── venv/
-└── siddhi/
-    ├── app.siddhi
-    └── dockerfile
-```
+The process supports the following order actions:
+
+- `PlaceOrder`
+- `ReceiveOrder`
+- `CancelOrder`
+- `PayOrder`
+
+These actions are routed through the DCR logic and validated before execution.
 
 ---
 
 ## Prerequisites
 
-Before running the project, make sure the following are available:
+Before running the DCR setup, make sure that:
 
-- Docker
-- Docker Compose
-- A valid DCR Graph account and credentials
-- Access to the DCR Graphs API
+- Docker and Docker Compose are installed
+- a valid DCR Graph account is available
+- the required credentials are configured locally
 
-You will need the following environment variables for the microservice:
+You need the following environment variables in the microservice:
 
 - `DCR_GRAPH_ID`
 - `DCR_USERNAME`
 - `DCR_PASSWORD`
 
-The template for these credentials is available at `DCR/microservice/.env.template`.
+A template is available in `microservice/.env.template`.
 
 ---
 
@@ -164,25 +134,23 @@ DCR_USERNAME=YOUR_USERNAME
 DCR_PASSWORD=YOUR_PASSWORD
 ```
 
-This file is used by the Flask microservice at startup. The code reads these values with `os.getenv(...)` in `dcr_helper.py`.
-
-> Important: never commit real credentials to version control. Keep the actual `.env` file local only.
+> Do not commit real credentials to version control. Keep the actual `.env` file local only.
 
 ---
 
-## Running the system
+## Running the DCR stack
 
-From the project root (`DCR/`), run:
+From the `DCR` folder, run:
 
 ```bash
 docker compose up --build
 ```
 
-This builds and starts:
+This starts the main services for the project:
 
-- `microservice` on port `5001`
-- `siddhi-runtime` on port `7070` and `9390`
-- `logging-service` on port `5002`
+- microservice
+- Siddhi runtime
+- logging service
 
 To stop the stack:
 
@@ -192,73 +160,34 @@ docker compose down
 
 ---
 
-## Service endpoints and responsibilities
+## Project structure
 
-### Microservice endpoints
-
-The Flask API in `microservice/app.py` exposes the following endpoints:
-
-#### POST `/place_order`
-Creates a new DCR case and triggers the `PlaceOrder` event.
-
-Request body:
-
-```json
-{
-  "order_id": "ORD-1001"
-}
-```
-
-Behavior:
-
-- Creates a DCR case ID
-- Calls the DCR backend to execute `PlaceOrder`
-- Sends callback information back to Siddhi
-
-#### POST `/receive_order`
-Executes the `ReceiveOrder` event for an existing order.
-
-Request body:
-
-```json
-{
-  "order_id": "ORD-1001",
-  "case_id": "12345"
-}
-```
-
-#### POST `/cancel_order`
-Executes the `CancelOrder` event for an existing order.
-
-Request body:
-
-```json
-{
-  "order_id": "ORD-1001",
-  "case_id": "12345"
-}
-```
-
-#### POST `/pay_order`
-Executes the `PayOrder` event for an existing order.
-
-Request body:
-
-```json
-{
-  "order_id": "ORD-1001",
-  "case_id": "12345"
-}
+```text
+DCR/
+├── docker-compose.yml
+├── README.md
+├── rebuild.sh
+├── logging_service/
+│   ├── app.py
+│   ├── dockerfile
+│   ├── logs/
+│   └── XES/
+├── microservice/
+│   ├── .env.template
+│   ├── app.py
+│   ├── dcr_helper.py
+│   ├── dockerfile
+│   └── requirements.txt
+└── siddhi/
+    ├── OrderFoodAppDEMO.siddhi
+    └── dockerfile
 ```
 
 ---
 
-### Siddhi input and callback behavior
+## Example runtime behavior
 
-Siddhi listens for incoming customer actions and calls the microservice endpoints as needed.
-
-#### Customer stream
-The `CustomerStream` expects a JSON payload like:
+The system expects requests in the following shape:
 
 ```json
 {
@@ -267,163 +196,27 @@ The `CustomerStream` expects a JSON payload like:
 }
 ```
 
-Allowed actions:
-
-- `PlaceOrder`
-- `ReceiveOrder`
-- `CancelOrder`
-- `PayOrder`
-
-#### Middleman callback stream
-The microservice posts callback information to Siddhi at the `middleman` endpoint.
-
-Example payload:
-
-```json
-{
-  "order_id": "ORD-1001",
-  "case_id": "12345",
-  "event": "PlaceOrder"
-}
-```
-
-If the DCR execution returned an error, Siddhi receives:
-
-```json
-{
-  "order_id": "ORD-1001",
-  "case_id": "12345",
-  "event": "CancelOrder",
-  "error": "DCR returned 400"
-}
-```
+The microservice endpoints then perform the DCR operations for the corresponding order. If a request is invalid, Siddhi rejects it before it reaches the backend and forwards the error to the logging service.
 
 ---
 
-## DCR integration details
+## Logging and debugging
 
-The DCR logic lives in `microservice/dcr_helper.py`.
+The logging service records entries in a file and prints them to the Docker console. This makes it easier to trace invalid requests and process errors during development.
 
-The helper configures Basic Authentication headers with the credentials stored in the environment variables:
+Typical log messages include:
 
-```python
-DCR_API_BASE = "https://api.dcrgraphs.net/api"
-```
-
-It supports two key operations:
-
-- `create_case()`
-  - Calls the DCR API to create a new simulation instance
-  - Retrieves the newest case ID from the graph simulations list
-
-- `execute_event(case_id, event_id)`
-  - Sends a POST request to execute a named event on a DCR case
-  - Returns a result object with `error`, `message`, and `enabledEvents`
-
-This is the direct bridge between the order logic and the DCR backend.
+- order does not exist
+- invalid transition in the DCR process
+- execution failed for a given order action
 
 ---
 
-## Error handling and logging
+## Notes
 
-The logging service exposes this endpoint:
+This DCR implementation is intentionally minimal, but it is designed to be extended. It acts as a strong foundation for more advanced event-driven systems that require strict process constraints, state validation, and service orchestration.
 
-#### POST `/log`
-
-Example payload:
-
-```json
-{
-  "order_id": "ORD-1001",
-  "error": "Can't pay an order that doesn't exist"
-}
 ```
-
-The service appends the entry in the format:
-
-```text
-2026-09-07T12:00:00.000000 | order_id=ORD-1001 | error=Can't pay an order that doesn't exist
-```
-
-The log file is stored at:
-
-```text
-DCR/logging_service/logs/logs.txt
-```
-
-The log message is also printed to the Docker console for immediate debugging.
-
----
-
-## Example workflow
-
-A typical successful flow looks like this:
-
-```text
-POST /place_order
-  {"order_id": "ORD-1001"}
-      |
-      v
-Siddhi validates request and sends to microservice
-      |
-      v
-Microservice creates new DCR case
-      |
-      v
-Microservice calls DCR API: PlaceOrder
-      |
-      v
-Microservice posts callback to Siddhi
-      |
-      v
-Siddhi saves order_id -> case_id in OrderCases
-      |
-      v
-Later: POST /pay_order with same order_id and case_id
-```
-
-Invalid actions are rejected by Siddhi before they reach the microservice. Examples include:
-
-- Trying to place an order that already exists
-- Trying to cancel an order that was never created
-- Trying to receive or pay for a non-existent order
-
-Those invalid operations produce an error message that is forwarded to the logging service.
-
----
-
-## Docker Compose setup
-
-The `docker-compose.yml` file defines the services:
-
-```yaml
-services:
-  microservice:
-    build: ./microservice
-    container_name: dcr-microservice
-    ports:
-      - "5001:5001"
-    env_file:
-      - ./microservice/.env
-    depends_on:
-      - siddhi
-
-  siddhi:
-    build: ./siddhi
-    container_name: siddhi-runtime
-    ports:
-      - "7070:7070"
-      - "9390:9390"
-
-logging-service:
-  build: ./logging_service
-  container_name: logging-service
-  ports:
-    - "5002:5002"
-  volumes:
-    - ./logging_service/logs:/logs
-```
-
 Notes:
 
 - The microservice depends on Siddhi, so the event pipeline starts in the expected order.

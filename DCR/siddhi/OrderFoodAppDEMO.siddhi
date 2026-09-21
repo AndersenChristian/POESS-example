@@ -70,6 +70,13 @@ define stream CancelOrderOutAttempt(order_id string, case_id string);
 define stream PayOrderOut(order_id string, case_id string);
 define stream PayOrderOutAttempt(order_id string, case_id string);
 
+@sink(type='http',
+      publisher.url='http://microservice:5001/get_available_actions',
+      method='POST',
+      @map(type='json'))
+define stream GetAvailableActionsOut(order_id string, case_id string);
+define stream GetAvailableActionsOutAttempt(order_id string, case_id string);
+
 define stream ErrorStream(order_id string, error string);
 
 /* -----------------------------
@@ -163,6 +170,22 @@ select order_id, "Can't pay an order that doesn't exist" as error
 insert into ErrorStream;
 
 
+/* Customer requests the currently available actions on their order */
+from CustomerStream[action == "GetAvailableActions"] as C
+left outer join OrderCases as O
+    on C.order_id == O.order_id
+select C.order_id, O.case_id
+insert into GetAvailableActionsOutAttempt;
+
+from GetAvailableActionsOutAttempt[not(case_id is null)]
+select order_id, case_id
+insert into GetAvailableActionsOut;
+
+from GetAvailableActionsOutAttempt[case_id is null]
+select order_id, "Can't get available actions for an order that doesn't exist" as error
+insert into ErrorStream;
+
+
 /* -----------------------------
    MIDDLEMAN CALLBACKS
    ----------------------------- */
@@ -186,6 +209,8 @@ insert into Nothing; /* No action needed, just for logging */
 from MiddlemanStream[event == "PayOrder"]
 delete OrderCases
     on OrderCases.order_id == order_id;
+
+/* Middleman returns the available actions requested by the customer; caught by the catch-all rule below and logged */
 
 
 /* -----------------------------
